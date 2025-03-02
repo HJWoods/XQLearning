@@ -1,5 +1,5 @@
 """
-Lexer module for the Poly-c compiler
+Updated Lexer module for the Poly-c compiler
 This module handles lexical analysis (tokenizing) for Poly-c code
 """
 
@@ -363,4 +363,7 @@ def tokenize(source_code):
     """Tokenize poly-c source code."""
     lexer = Lexer(source_code)
     tokens, errors = lexer.tokenize()
+    if errors:
+        for error in errors:
+            print(f"LEXER ERROR: {error}")
     return tokens, errors

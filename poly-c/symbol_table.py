@@ -1,6 +1,6 @@
 """
-Symbol Table module for the Poly-c compiler
-This module handles symbol management and scope tracking
+Symbol Table module for the Poly-c compiler - FIXED VERSION
+This module handles symbol management and scope tracking for Poly-c code
 """
 
 from enum import Enum, auto
@@ -67,6 +67,15 @@ class Scope:
         """Define a symbol in this scope"""
         if symbol.name in self.symbols:
             existing = self.symbols[symbol.name]
+            
+            # Allow redefinition if one is a function declaration and one is a full definition
+            if (symbol.symbol_type == SymbolType.FUNCTION and 
+                existing.symbol_type == SymbolType.FUNCTION):
+                # Update the existing symbol with any new information
+                if not existing.parameters and symbol.parameters:
+                    existing.parameters = symbol.parameters
+                return existing
+            
             raise SymbolTableError(f"Symbol '{symbol.name}' redefined", existing)
         
         self.symbols[symbol.name] = symbol
@@ -91,6 +100,7 @@ class SymbolTable:
         self.current_scope = self.global_scope
         self.scopes = [self.global_scope]
         self.all_symbols = {}  # For quick lookup of all symbols
+        self.user_defined_functions = set()  # Track user-defined functions
     
     def enter_scope(self, name=None):
         """Enter a new scope"""
@@ -114,6 +124,11 @@ class SymbolTable:
         try:
             self.current_scope.define(symbol)
             self.all_symbols[symbol.name] = symbol
+            
+            # Track function definitions
+            if symbol.symbol_type == SymbolType.FUNCTION:
+                self.user_defined_functions.add(symbol.name)
+                
             return symbol
         except SymbolTableError as e:
             # Re-raise the exception
@@ -134,6 +149,10 @@ class SymbolTable:
     def get_symbols_by_type(self, symbol_type):
         """Get all symbols of a specific type"""
         return [s for s in self.all_symbols.values() if s.symbol_type == symbol_type]
+    
+    def is_user_defined_function(self, name):
+        """Check if a name is a user-defined function"""
+        return name in self.user_defined_functions
 
 def map_type_string(type_str):
     """Map a type string to a DataType enum"""
@@ -174,17 +193,30 @@ def build_symbol_table(ast):
         
         try:
             if node.type == ASTNodeType.PROGRAM:
-                # Process all declarations first to allow for forward references
+                # First, do a pre-scan to identify function definitions
+                for child in node.children:
+                    if child.type == ASTNodeType.FUNCTION_DEF:
+                        # Register the function name so we know it exists
+                        function_name = child.value
+                        symbol = Symbol(
+                            function_name, 
+                            SymbolType.FUNCTION, 
+                            DataType.FLOAT,  # Default return type
+                            line=child.token.line if child.token else None
+                        )
+                        symbol_table.define(symbol)
+                
+                # Process all declarations
                 for child in node.children:
                     if child.type == ASTNodeType.VARIABLE_DECL:
                         process_variable_declaration(child)
                 
-                # Then process functions
+                # Process functions
                 for child in node.children:
                     if child.type == ASTNodeType.FUNCTION_DEF:
                         process_function_definition(child)
                 
-                # Process blocks last
+                # Process blocks
                 for child in node.children:
                     if child.type not in [ASTNodeType.VARIABLE_DECL, ASTNodeType.FUNCTION_DEF]:
                         process_node(child)
@@ -235,11 +267,15 @@ def build_symbol_table(ast):
             
             elif node.type == ASTNodeType.FUNCTION_CALL:
                 # Check if the function exists
-                function_symbol = symbol_table.resolve(node.value)
+                function_name = node.value
+                function_symbol = symbol_table.resolve(function_name)
+                
                 if not function_symbol:
-                    errors.append(f"Line {node.token.line}: Undefined function '{node.value}'")
+                    # Only report an error if it's not a known function
+                    if not symbol_table.is_user_defined_function(function_name):
+                        errors.append(f"Line {node.token.line if node.token else '?'}: Undefined function '{function_name}'")
                 elif function_symbol.symbol_type != SymbolType.FUNCTION:
-                    errors.append(f"Line {node.token.line}: '{node.value}' is not a function")
+                    errors.append(f"Line {node.token.line if node.token else '?'}: '{function_name}' is not a function")
                 
                 # Process arguments
                 for child in node.children:
@@ -247,11 +283,12 @@ def build_symbol_table(ast):
             
             elif node.type == ASTNodeType.ARRAY_ACCESS:
                 # Check if the array exists
-                array_symbol = symbol_table.resolve(node.value)
+                array_name = node.value
+                array_symbol = symbol_table.resolve(array_name)
                 if not array_symbol:
-                    errors.append(f"Line {node.token.line}: Undefined array '{node.value}'")
+                    errors.append(f"Line {node.token.line if node.token else '?'}: Undefined array '{array_name}'")
                 elif not array_symbol.dimensions:
-                    errors.append(f"Line {node.token.line}: '{node.value}' is not an array")
+                    errors.append(f"Line {node.token.line if node.token else '?'}: '{array_name}' is not an array")
                 
                 # Process index expression
                 if node.children:
@@ -261,10 +298,13 @@ def build_symbol_table(ast):
                 # Check if the identifier exists
                 symbol = symbol_table.resolve(node.value)
                 if not symbol:
-                    errors.append(f"Line {node.token.line}: Undefined variable '{node.value}'")
+                    # Skip error for function calls, as they're handled separately
+                    if not symbol_table.is_user_defined_function(node.value):
+                        errors.append(f"Line {node.token.line if node.token else '?'}: Undefined variable '{node.value}'")
                 else:
                     # Add a reference to the symbol
-                    symbol.references.append((node.token.line, node.token.column))
+                    if node.token:
+                        symbol.references.append((node.token.line, node.token.column))
         
         except Exception as e:
             errors.append(f"Symbol table error: {str(e)}")
@@ -306,42 +346,36 @@ def build_symbol_table(ast):
         """Process a function definition node"""
         function_name = node.value
         
-        # Create function symbol (default to float return type)
-        function_symbol = Symbol(function_name, SymbolType.FUNCTION, DataType.FLOAT, line=node.token.line)
+        # Function symbol should already exist from the pre-scan
+        function_symbol = symbol_table.resolve(function_name)
         
-        try:
-            # Add to symbol table
-            symbol_table.define(function_symbol)
-            
-            # Enter a new scope for the function body
-            symbol_table.enter_scope(function_name)
-            
-            # Process parameters
-            parameters = []
-            for child in node.children:
-                if child.type == ASTNodeType.FUNCTION_PARAM:
-                    param_name = child.value
-                    param_symbol = Symbol(param_name, SymbolType.PARAMETER, DataType.FLOAT, line=child.token.line)
-                    
-                    try:
-                        symbol_table.define(param_symbol)
-                        parameters.append(param_symbol)
-                    except SymbolTableError as e:
-                        errors.append(str(e))
-            
-            # Update function symbol with parameters
+        # Enter a new scope for the function body
+        symbol_table.enter_scope(function_name)
+        
+        # Process parameters
+        parameters = []
+        for child in node.children:
+            if child.type == ASTNodeType.FUNCTION_PARAM:
+                param_name = child.value
+                param_symbol = Symbol(param_name, SymbolType.PARAMETER, DataType.FLOAT, line=child.token.line)
+                
+                try:
+                    symbol_table.define(param_symbol)
+                    parameters.append(param_symbol)
+                except SymbolTableError as e:
+                    errors.append(str(e))
+        
+        # Update function symbol with parameters if it exists
+        if function_symbol:
             function_symbol.parameters = parameters
-            
-            # Process function body
-            for child in node.children:
-                if child.type == ASTNodeType.BLOCK:
-                    process_node(child)
-            
-            # Exit function scope
-            symbol_table.exit_scope()
         
-        except SymbolTableError as e:
-            errors.append(str(e))
+        # Process function body
+        for child in node.children:
+            if child.type == ASTNodeType.BLOCK:
+                process_node(child)
+        
+        # Exit function scope
+        symbol_table.exit_scope()
     
     # Start processing from the root
     if ast:

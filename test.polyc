@@ -1,4 +1,4 @@
-input float x
+action float x
 main() {
     x = 1.0
 }

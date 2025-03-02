@@ -10,11 +10,12 @@ and policies all in one language.
 import os
 import sys
 import argparse
-from lexer import tokenize_code
+import traceback
+from lexer import tokenize
 from parser import parse_tokens
-from symbol_table import build_symbol_table
-from semantic_analyzer import analyze_ast
-from code_generator import generate_code
+from symbol_table import build_from_ast
+from semantic_analyzer import analyze
+from code_generator import generate
 
 # Function to get a snippet of code around a specific line
 def get_code_snippet(source_code, line, context=2):
@@ -50,22 +51,52 @@ def compile_file(input_file, output_file=None, verbose=False):
         # Stage 1: Lexical Analysis
         if verbose:
             print("Stage 1: Lexical Analysis")
-        tokens = tokenize_code(source_code)
+        tokens = tokenize(source_code)
         if verbose:
             print(f"  Generated {len(tokens)} tokens")
         
         # Stage 2: Syntax Analysis (Parsing)
         if verbose:
             print("Stage 2: Syntax Analysis")
-        ast = parse_tokens(tokens)
+        ast, parser_errors = parse_tokens(tokens)
+        
+        if parser_errors:
+            print("SYNTAX ERROR in parsing")
+            print("-" * 40)
+            for error in parser_errors:
+                error_line = None
+                if hasattr(error, 'token') and error.token:
+                    error_line = error.token.line
+                print(f"{error}")
+                if error_line:
+                    snippet = get_code_snippet(source_code, error_line)
+                    print(f"Code context:\n{snippet}\n")
+            return False
+                
         if verbose:
             print("  Generated Abstract Syntax Tree")
         
         # Stage 3: Build Symbol Table 
         if verbose:
             print("Stage 3: Symbol Table Construction")
-        # Build symbol table from AST instead of tokens
-        symbol_table = build_symbol_table(ast)
+        # Build symbol table from AST
+        symbol_table, symbol_errors = build_from_ast(ast)
+        
+        if symbol_errors:
+            print("SYMBOL TABLE ERROR")
+            print("-" * 40)
+            for error in symbol_errors:
+                # Try to extract line number
+                import re
+                line_match = re.search(r'at line (\d+)', str(error))
+                if line_match:
+                    line = int(line_match.group(1))
+                    snippet = get_code_snippet(source_code, line)
+                    print(f"{error}\nCode context:\n{snippet}\n")
+                else:
+                    print(f"{error}")
+            return False
+            
         if verbose:
             symbols = symbol_table.get_all_symbols()
             print(f"  Added {len(symbols)} symbols to the symbol table")
@@ -73,14 +104,14 @@ def compile_file(input_file, output_file=None, verbose=False):
         # Stage 4: Semantic Analysis
         if verbose:
             print("Stage 4: Semantic Analysis")
-        success, errors, symbol_table = analyze_ast(ast, symbol_table)
+        success, errors = analyze(ast, symbol_table)
         if not success:
             print(f"SEMANTIC ERROR in {input_file}")
             print("-" * 40)
             for error in errors:
                 # Extract line number from error message
                 import re
-                line_match = re.search(r'Line (\d+):', error)
+                line_match = re.search(r'at line (\d+)', str(error))
                 if line_match:
                     line = int(line_match.group(1))
                     snippet = get_code_snippet(source_code, line)
@@ -94,7 +125,7 @@ def compile_file(input_file, output_file=None, verbose=False):
         # Stage 5: Code Generation
         if verbose:
             print("Stage 5: Code Generation")
-        output_code = generate_code(ast, symbol_table)
+        output_code = generate(ast, symbol_table)
         if verbose:
             print(f"  Generated {len(output_code.split(os.linesep))} lines of Python code")
         
@@ -108,8 +139,6 @@ def compile_file(input_file, output_file=None, verbose=False):
         return True
     
     except Exception as e:
-        import traceback
-        
         # Get line information if available
         line = None
         if hasattr(e, 'line'):

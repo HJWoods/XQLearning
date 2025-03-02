@@ -1,6 +1,5 @@
 """
 Parser module for the Poly-c compiler
-This module handles syntax analysis for Poly-c code
 """
 
 from enum import Enum, auto
@@ -108,44 +107,54 @@ class Parser:
         try:
             program_node = ASTNode(ASTNodeType.PROGRAM)
             
-            # Parse variable declarations
-            while self.current_token().type in [
-                TokenType.INPUT, TokenType.ACTION, TokenType.CONST, 
-                TokenType.VAR, TokenType.ENV
-            ]:
-                try:
-                    var_decl = self.parse_variable_declaration()
-                    program_node.add_child(var_decl)
-                except ParserError as e:
-                    # Try to synchronize to the next declaration
-                    self.synchronize_to_declaration()
-            
-            # Parse constraints block if present
-            if self.match(TokenType.CONSTRAINTS):
-                try:
-                    constraints = self.parse_constraints_block()
-                    program_node.add_child(constraints)
-                except ParserError as e:
-                    # Try to synchronize to the next section
-                    self.synchronize_to_section()
-            
-            # Parse goals block if present
-            if self.match(TokenType.GOALS):
-                try:
-                    goals = self.parse_goals_block()
-                    program_node.add_child(goals)
-                except ParserError as e:
-                    # Try to synchronize to the next section
-                    self.synchronize_to_section()
-            
-            # Parse function definitions until the end
+            # Process variable declarations, constraints, goals, and functions
             while self.current_token().type != TokenType.EOF:
-                try:
-                    function = self.parse_function_definition()
-                    program_node.add_child(function)
-                except ParserError as e:
-                    # Try to synchronize to the next function
-                    self.synchronize_to_function()
+                # Handle variable declarations
+                if self.current_token().type in [
+                    TokenType.INPUT, TokenType.ACTION, TokenType.CONST, 
+                    TokenType.VAR, TokenType.ENV
+                ]:
+                    try:
+                        var_decl = self.parse_variable_declaration()
+                        program_node.add_child(var_decl)
+                    except ParserError as e:
+                        # Try to synchronize to the next declaration
+                        self.synchronize_to_declaration()
+                
+                # Handle constraints block
+                elif self.current_token().type == TokenType.CONSTRAINTS:
+                    try:
+                        self.advance()  # Consume 'constraints' token
+                        constraints = self.parse_constraints_block()
+                        program_node.add_child(constraints)
+                    except ParserError as e:
+                        # Try to synchronize to the next section
+                        self.synchronize_to_section()
+                
+                # Handle goals block
+                elif self.current_token().type == TokenType.GOALS:
+                    try:
+                        self.advance()  # Consume 'goals' token
+                        goals = self.parse_goals_block()
+                        program_node.add_child(goals)
+                    except ParserError as e:
+                        # Try to synchronize to the next section
+                        self.synchronize_to_section()
+                
+                # Handle function definitions
+                elif self.current_token().type == TokenType.IDENTIFIER:
+                    try:
+                        function = self.parse_function_definition()
+                        program_node.add_child(function)
+                    except ParserError as e:
+                        # Try to synchronize to the next function
+                        self.synchronize_to_function()
+                
+                else:
+                    # Skip unknown token and report error
+                    error = ParserError(f"Unexpected token: {self.current_token().type.name}", self.current_token())
+                    self.errors.append(error)
+                    self.advance()  # Skip the problematic token
             
             return program_node
         
@@ -319,12 +328,6 @@ class Parser:
     
     def parse_function_definition(self):
         """Parse a function definition."""
-        # Parse an inbuilt method name, if found throw an error
-        if self.current_token().type == TokenType.MIN or self.current_token().type == TokenType.MAX:
-            print("Bruh")
-            error =  ParserError(f"Cannot define inbuilt method {self.current_token().type.name}", self.current_token())
-            self.errors.append(error)
-            raise error
         # Parse function name
         function_name_token = self.expect(TokenType.IDENTIFIER, "Expected function name")
         
@@ -437,8 +440,20 @@ class Parser:
         
         # Check for else clause
         if self.match(TokenType.ELSE):
-            else_block = self.parse_block()
-            if_node.add_child(else_block)
+            # Check if there's an "else if" pattern
+            if self.match(TokenType.IF):
+                # We have an "else if" - parse it as a nested if inside the else block
+                else_block = ASTNode(ASTNodeType.BLOCK)  # Create an implicit block for the else
+                
+                # Parse the nested "if" inside the else block
+                nested_if = self.parse_if_statement()  # This will handle the whole "if (...) {...}" including any chained "else if"s
+                else_block.add_child(nested_if)
+                
+                if_node.add_child(else_block)
+            else:
+                # Regular else block
+                else_block = self.parse_block()
+                if_node.add_child(else_block)
         
         return if_node
     
