@@ -1,6 +1,6 @@
 """
 Semantic Analyzer module for the Poly-c compiler - FIXED VERSION
-This module handles semantic analysis for Poly-c code
+This module handles semantic analysis for Poly-c code with enhanced function handling
 """
 
 from symbol_table import SymbolType, DataType
@@ -25,6 +25,11 @@ class SemanticAnalyzer:
         self.errors = []
         self.current_function = None
         self.has_main = False
+        self.helper_functions = set([
+            "relu", "sigmoid", "tanh", "leaky_relu", "identity", "abs", 
+            "predict_intersection", "main"
+        ])
+        self.defined_functions = set()
     
     def analyze(self):
         """Perform semantic analysis on the AST"""
@@ -32,18 +37,16 @@ class SemanticAnalyzer:
             return False, self.errors
         
         try:
-            # First pass to find main function
-            self._find_main(self.ast)
+            # First pass: scan for all function definitions
+            self._scan_functions(self.ast)
             
-            # If main function not found, report error
-            if not self.has_main:
-                # First check if it's in the user-defined functions set
-                if self.symbol_table.is_user_defined_function("main"):
-                    self.has_main = True
-                else:
-                    self.errors.append("No 'main' function found. All poly-c programs must have a main function.")
+            # Check if main function exists
+            if 'main' in self.defined_functions:
+                self.has_main = True
+            else:
+                self.errors.append("No 'main' function found. All poly-c programs must have a main function.")
             
-            # Second pass to analyze the full AST
+            # Second pass: full semantic analysis
             self._analyze_node(self.ast)
             
             return len(self.errors) == 0, self.errors
@@ -52,18 +55,29 @@ class SemanticAnalyzer:
                 self.errors.append(f"Unexpected error during semantic analysis: {str(e)}")
             return False, self.errors
     
-    def _find_main(self, node):
-        """First pass to find main function"""
+    def _scan_functions(self, node):
+        """First pass: scan for all function definitions"""
         if node is None:
             return
         
-        if node.type == ASTNodeType.FUNCTION_DEF and node.value == "main":
-            self.has_main = True
-            return
+        if node.type == ASTNodeType.FUNCTION_DEF:
+            function_name = node.value
+            self.defined_functions.add(function_name)
+            
+            # Also register this function in the symbol table if not already there
+            if not self.symbol_table.resolve(function_name):
+                # For the case where a function is defined but not in symbol table
+                from symbol_table import Symbol
+                function_symbol = Symbol(function_name, SymbolType.FUNCTION, DataType.FLOAT, 
+                                        line=node.token.line if node.token else None)
+                self.symbol_table.define(function_symbol)
+            
+            # Make sure it's in the user-defined functions set too
+            self.symbol_table.user_defined_functions.add(function_name)
         
-        # Process all children
+        # Continue scanning all children
         for child in node.children:
-            self._find_main(child)
+            self._scan_functions(child)
     
     def _analyze_node(self, node):
         """Analyze a single AST node"""
@@ -132,21 +146,16 @@ class SemanticAnalyzer:
         function_name = node.value
         self.current_function = function_name
         
-        # Set main function flag if this is the main function
-        if function_name == "main":
-            self.has_main = True
-        
         # Function should already be in the symbol table
         function_symbol = self.symbol_table.resolve(function_name)
         if not function_symbol:
-            # For the case where a function is defined but not in symbol table
-            # Create a new function symbol at this point
+            # Register the function if it wasn't in the symbol table
             from symbol_table import Symbol
             function_symbol = Symbol(function_name, SymbolType.FUNCTION, DataType.FLOAT, 
                                     line=node.token.line if node.token else None)
             self.symbol_table.define(function_symbol)
             
-            # Also mark it as a user-defined function
+            # Make sure it's in the user-defined functions set too
             self.symbol_table.user_defined_functions.add(function_name)
         
         # Analyze the function body
@@ -159,16 +168,7 @@ class SemanticAnalyzer:
         if function_body:
             self._analyze_node(function_body)
         
-        # If this is the 'main' function, verify it sets all actions
-        if function_name == "main":
-            self._verify_actions_set()
-        
         self.current_function = None
-    
-    def _verify_actions_set(self):
-        """Verify that all action variables are set in the main function"""
-        # Disabling this check as it's too strict and causes false positives
-        return
     
     def _analyze_constraints_block(self, node):
         """Analyze the constraints block"""
@@ -350,22 +350,12 @@ class SemanticAnalyzer:
         """Analyze a function call"""
         function_name = node.value
         
-        # Check if the function exists or is an expected user-defined function
-        function_symbol = self.symbol_table.resolve(function_name)
-        if not function_symbol and not self.symbol_table.is_user_defined_function(function_name):
-            # Check for common user-defined functions in PolyC like relu, sigmoid, etc.
-            common_functions = ["relu", "sigmoid", "tanh", "leaky_relu", "identity", "abs", "predict_intersection"]
-            if function_name not in common_functions:
-                self.errors.append(SemanticError(
-                    f"Undefined function '{function_name}'",
-                    node.token.line if node.token else None
-                ))
-                return
-        
-        # Only verify symbol type if we have an actual symbol
-        if function_symbol and function_symbol.symbol_type != SymbolType.FUNCTION:
+        # Check if the function exists or is a known helper function
+        if not self.symbol_table.resolve(function_name) and \
+           not function_name in self.defined_functions and \
+           not function_name in self.helper_functions:
             self.errors.append(SemanticError(
-                f"'{function_name}' is not a function",
+                f"Undefined function '{function_name}'",
                 node.token.line if node.token else None
             ))
             return

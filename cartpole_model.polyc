@@ -790,7 +790,6 @@ const float b2_0 = 4.308155536651611
 const float b2_1 = 4.244616985321045
 var float[2] layer2_output
 var float temp
-max_force = 1.0
 
 constraints [
     cart_force >= -1.0
@@ -834,6 +833,7 @@ tanh(x) {
     return 0.33 * x
 }
 
+const float leaky_relu_alpha = 0.03
 leaky_relu(x) {
     if x < 0 {
         return leaky_relu_alpha * x

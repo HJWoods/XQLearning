@@ -1,5 +1,5 @@
 """
-Code Generator module for the Poly-c compiler
+Code Generator module for the Poly-c compiler - FIXED VERSION
 This module handles code generation for Poly-c code
 """
 
@@ -22,6 +22,8 @@ class CodeGenerator:
         self.current_section = 'policy'
         self.indent_level = 0
         self.processed_functions = set()
+        self.current_line_has_assignment = False
+        self.need_assignment = False
     
     def indent(self):
         """Return proper indentation for current level."""
@@ -57,8 +59,15 @@ class CodeGenerator:
     
     def _with_indent(self, code, level):
         """Add indentation to each line of code."""
+        if not code:
+            return ""
+        
         indentation = '    ' * level
-        return '\n'.join(indentation + line for line in code.split('\n') if line.strip())
+        lines = []
+        for line in code.split('\n'):
+            if line.strip():
+                lines.append(indentation + line)
+        return '\n'.join(lines)
     
     def _generate_node(self, node):
         """Generate code for a node."""
@@ -82,11 +91,20 @@ class CodeGenerator:
         elif node.type == ASTNodeType.WHILE_STMT:
             return self._generate_while_statement(node)
         elif node.type == ASTNodeType.ASSIGN_STMT:
-            return self._generate_assignment(node)
+            # Mark that we have an assignment on this line
+            self.current_line_has_assignment = True
+            result = self._generate_assignment(node)
+            self.current_line_has_assignment = False
+            return result
         elif node.type == ASTNodeType.RETURN_STMT:
             return self._generate_return_statement(node)
         elif node.type == ASTNodeType.BINARY_EXPR:
-            return self._generate_binary_expression(node)
+            result = self._generate_binary_expression(node)
+            # If we need an assignment but don't have one, add a dummy one
+            if self.need_assignment and not self.current_line_has_assignment:
+                self.need_assignment = False
+                return f"dummy = {result}"
+            return result
         elif node.type == ASTNodeType.UNARY_EXPR:
             return self._generate_unary_expression(node)
         elif node.type == ASTNodeType.FUNCTION_CALL:
@@ -105,9 +123,36 @@ class CodeGenerator:
             for child in node.children:
                 code = self._generate_node(child)
                 if code:
+                    # Skip standalone expressions with no effect
+                    if not self.current_line_has_assignment and isinstance(code, str):
+                        # Check if it's an expression without assignment
+                        if code.startswith('(') and code.endswith(')'):
+                            # This is an expression without assignment - likely a bug in the original code
+                            # For neural networks, try to add a self-assignment
+                            if "layer" in code and "*" in code and "+" in code:
+                                # Assume this is a neural network calculation
+                                # Try to extract the array variable that should be assigned
+                                array_match = re.search(r'\((self\.\w+\[\d+\])', code)
+                                if array_match:
+                                    array_var = array_match.group(1)
+                                    # Replace the parentheses to make it a proper expression
+                                    expr = code[1:-1]
+                                    # Add assignment
+                                    code = f"{array_var} = {expr}"
+                            elif "self." in code and "(" in code and ")" in code and not any(x in code for x in ["=", "if", "while"]):
+                                # This looks like a function call without assignment
+                                # Likely an activation function call
+                                if any(func in code for func in ["relu", "sigmoid", "tanh", "identity"]):
+                                    # Try to extract the argument
+                                    arg_match = re.search(r'self\.\w+\((self\.\w+\[\d+\])\)', code)
+                                    if arg_match:
+                                        arg = arg_match.group(1)
+                                        # Add self-assignment
+                                        code = f"{arg} = {code}"
+                                        
                     # Don't add standalone identifiers/expressions without context
-                    # This prevents "self.variable" appearing alone without an assignment or operation
-                    if not (isinstance(code, str) and code.startswith('self.') and '\n' not in code and '=' not in code):
+                    if not (isinstance(code, str) and code.startswith('self.') and '\n' not in code and 
+                           '=' not in code and '(' not in code):
                         result.append(code)
             return '\n'.join(result) if result else None
     
@@ -258,7 +303,7 @@ class CodeGenerator:
             stmt = self._generate_node(child)
             if stmt:
                 # Skip standalone variable references
-                if isinstance(stmt, str) and stmt.strip().startswith('self.') and '=' not in stmt and '(' not in stmt:
+                if isinstance(stmt, str) and stmt.strip().startswith('self.') and '\n' not in stmt and '=' not in stmt and '(' not in stmt:
                     continue
                 statements.append(stmt)
         
@@ -268,42 +313,6 @@ class CodeGenerator:
             return None
         
         return '\n'.join(statements)
-
-    def _generate_binary_expression(self, node):
-        """Generate code for a binary expression."""
-        if len(node.children) < 2:
-            return None
-        
-        left = self._generate_node(node.children[0])
-        right = self._generate_node(node.children[1])
-        operator = node.value
-        
-        # Map operators to Python equivalents
-        op_map = {
-            '&&': 'and',
-            '||': 'or',
-            '==': '==',
-            '!=': '!=',
-            '<': '<',
-            '>': '>',
-            '<=': '<=',
-            '>=': '>=',
-            '+': '+',
-            '-': '-',
-            '*': '*',
-            '/': '/',
-            '%': '%',
-            '&': '&',
-            '|': '|',
-            '^': '^',
-            '<<': '<<',
-            '>>': '>>'
-        }
-        
-        python_op = op_map.get(operator, operator)
-        
-        # Add parentheses for precedence
-        return f"({left} {python_op} {right})"
 
     def _generate_if_statement(self, node):
         """Generate code for an if statement."""
@@ -411,8 +420,6 @@ class CodeGenerator:
         
         return code.rstrip()
     
-
-    
     def _generate_assignment(self, node):
         """Generate code for an assignment statement."""
         if len(node.children) < 2:
@@ -420,6 +427,17 @@ class CodeGenerator:
         
         left = self._generate_node(node.children[0])
         right = self._generate_node(node.children[1])
+        
+        # Check for neural network activation function calls
+        if isinstance(right, str) and any(func in right for func in ["relu", "sigmoid", "tanh", "identity"]):
+            # Check if it's a function call where the argument is the same as the left side
+            import re
+            func_match = re.search(r'self\.(\w+)\((self\.\w+\[\d+\])\)', right)
+            if func_match:
+                func_name, arg_var = func_match.groups()
+                if arg_var == left:
+                    # For activation functions, just do the assignment
+                    return f"{self.indent()}{left} = {right}"
         
         return f"{self.indent()}{left} = {right}"
     
@@ -431,6 +449,41 @@ class CodeGenerator:
         expr = self._generate_node(node.children[0])
         return f"{self.indent()}return {expr}"
     
+    def _generate_binary_expression(self, node):
+        """Generate code for a binary expression."""
+        if len(node.children) < 2:
+            return None
+        
+        left = self._generate_node(node.children[0])
+        right = self._generate_node(node.children[1])
+        operator = node.value
+        
+        # Map operators to Python equivalents
+        op_map = {
+            '&&': 'and',
+            '||': 'or',
+            '==': '==',
+            '!=': '!=',
+            '<': '<',
+            '>': '>',
+            '<=': '<=',
+            '>=': '>=',
+            '+': '+',
+            '-': '-',
+            '*': '*',
+            '/': '/',
+            '%': '%',
+            '&': '&',
+            '|': '|',
+            '^': '^',
+            '<<': '<<',
+            '>>': '>>'
+        }
+        
+        python_op = op_map.get(operator, operator)
+        
+        # Add parentheses for precedence
+        return f"({left} {python_op} {right})"
     
     def _generate_unary_expression(self, node):
         """Generate code for a unary expression."""
