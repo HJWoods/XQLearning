@@ -1,0 +1,19 @@
+{
+  "input_vars": {
+    "screen_input": [
+      84,
+      84,
+      3
+    ]
+  },
+  "output_vars": {
+    "action": 1
+  },
+  "constants": {},
+  "env_vars": {},
+  "constraints": [],
+  "goals": [
+    "maximize total_reward"
+  ],
+  "model_name": "BreakoutNeuralNetwork"
+}

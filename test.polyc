@@ -1,0 +1,4 @@
+input float x
+main() {
+    x = 1.0
+}

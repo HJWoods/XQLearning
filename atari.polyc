@@ -1,0 +1,117 @@
+# Atari Pong Policy
+# This policy controls a paddle to play Pong against an opponent
+
+# Input variables
+input float paddle_y        # Our paddle's Y position
+input float ball_pos[2]     # Ball position [x, y]
+input float ball_vel[2]     # Ball velocity [x, y]
+input float opp_paddle_y    # Opponent paddle's Y position
+input float score_diff      # Current score difference (our score - opponent score)
+
+# Action variables
+action float paddle_move    # Paddle movement: -1 (up), 0 (stay), 1 (down)
+
+# State variables
+var float predicted_y       # Predicted Y position where ball will intersect our paddle
+var float target_y          # Target position for our paddle
+var float last_score_diff   # Used to detect when a point is scored
+
+# Constants
+const float paddle_height   # Height of the paddle
+const float court_height    # Height of the playing court
+const float max_speed       # Maximum paddle movement speed
+
+# Environment variables
+env float true_ball_dir     # True ball direction, not known to the policy
+
+# Set constants for this environment
+paddle_height = 0.2
+court_height = 1.0
+max_speed = 1.0
+
+# Constraints
+constraints [
+    paddle_move >= -1.0
+    paddle_move <= 1.0
+]
+
+# Goals
+goals [
+    max score_diff
+    min abs(paddle_y - predicted_y)
+]
+
+# Main policy function
+main() {
+    # Detect when a point is scored
+    if score_diff != last_score_diff {
+        last_score_diff = score_diff
+    }
+    
+    # Predict where the ball will intersect our side
+    predicted_y = predict_intersection()
+    
+    # Calculate the target position, accounting for paddle height
+    target_y = predicted_y - (paddle_height / 2)
+    
+    # Ensure target is within court boundaries
+    if target_y < 0 {
+        target_y = 0
+    }
+    
+    if target_y > (court_height - paddle_height) {
+        target_y = court_height - paddle_height
+    }
+    
+    # Move the paddle towards the target position
+    if paddle_y > target_y {
+        # Move up
+        paddle_move = -1.0
+    } else if paddle_y < target_y {
+        # Move down
+        paddle_move = 1.0
+    } else {
+        # Stay in position
+        paddle_move = 0
+    }
+    
+    # Apply a speed limit based on distance
+    if abs(paddle_y - target_y) < 0.02 {
+        paddle_move = 0
+    }
+}
+
+# Predict where the ball will intersect with our side of the court
+predict_intersection() {
+    # If ball is moving away from us, just track the ball's current y position
+    if ball_vel[0] >= 0 {
+        return ball_pos[1]
+    }
+    
+    # Calculate time until ball reaches our side
+    time_to_reach = -ball_pos[0] / ball_vel[0]
+    
+    # Predict y position at intersection
+    y_pos = ball_pos[1] + (ball_vel[1] * time_to_reach)
+    
+    # Account for bounces off the top and bottom walls
+    # Apply bounce physics - this simulates bounces within the prediction
+    while y_pos < 0 || y_pos > court_height {
+        if y_pos < 0 {
+            y_pos = -y_pos  # Bounce off bottom
+        }
+        if y_pos > court_height {
+            y_pos = 2 * court_height - y_pos  # Bounce off top
+        }
+    }
+    
+    return y_pos
+}
+
+# Absolute value function
+abs(x) {
+    if x < 0 {
+        return -x
+    }
+    return x
+}

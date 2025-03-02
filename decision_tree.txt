@@ -1,0 +1,35 @@
+if right == Floor:
+    if left == Out of Bounds:
+        if current == Start:
+            -> right (Q-value: 0.9982)
+        if current == Floor:
+            -> right (Q-value: 0.9982)
+        if current == Hole:
+            -> no action (terminal state)
+    if left == Start:
+        -> right (Q-value: 0.9983)
+    if left == Floor:
+        if up == Out of Bounds:
+            -> down (Q-value: 0.9985)
+        if up == Floor:
+            -> no action (terminal state)
+        if up == Hole:
+            -> right (Q-value: 0.9984)
+    if left == Hole:
+        -> right (Q-value: 0.9987)
+if right == Hole:
+    if left == Out of Bounds:
+        -> down (Q-value: 0.9980)
+    if left == Hole:
+        -> down (Q-value: 0.9987)
+    if left == Floor:
+        -> down (Q-value: 0.9991)
+if right == Out of Bounds:
+    if current == Floor:
+        -> left (Q-value: 0.9980)
+    if current == Hole:
+        -> no action (terminal state)
+    if current == Goal:
+        -> no action (terminal state)
+if right == Goal:
+    -> right (Q-value: 0.9997)

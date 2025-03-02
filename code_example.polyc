@@ -1,0 +1,59 @@
+
+# All variables are defined at the start of the file. Dynamic creation of variables is not possible, because the
+# state must always consist of the same types.
+
+# Only types are basic primitives, floats, ints, bools, chars.
+# Structs are deliberately not a thing, in an RL context they are difficult to conceive and can be implemented in the wider system that uses the policy
+# if needed
+# float is implicitly float[1]
+input float[3] position # Input (i.e. part of the state not affected by the system e.g. a sensor)
+action float[3] velocity # Output (part of the state that is affected by the system, and acts on the environment, e.g. actuators)
+const float maxSpeed # Constant - internal to the model, not part of the state, doesn't change.
+var float currentSpeed # A variable, part of the state but does not act on the environment. Changes between state transitions.
+env float[3] goalPosition # Environment variable. Not known to the model (thus can't be used in the policy), used exclusively in goals and constraints.
+env totalTime # Example of environment variable that changes over time
+
+var float health
+
+const float[3] x = [1,2,3]
+
+# goals + constraints are used to construct the reward function
+# weights for goals are learnt, not defined by the user
+# Special "min" and "max" variables for maximizing/minimizing a goal 
+goals [
+    position == goalPosition
+    max health
+    min totalTime
+]
+
+# constraints are considered in the reward function, but also flags to the user that the constraint is violated
+# in a search context this can be used to find
+constraints [
+    velocity < maxSpeed
+    health > 0
+]
+
+
+# Human-written Policy below (possibly in different file?)
+
+# All actions must be set to a value. This is to prevent the user forgetting to set an action, which I feel is safer than
+# just setting to 0 or another placeholder value
+
+# Functions are defined like this, main is always run first. Policy must always have a main.
+main() {
+    # array variables can be set either piece-by-piece or the whole array
+    # all operators are single value, but can be applied across the whole array implicitly.
+    
+    velocity = 0
+
+    if velocity > maxSpeed {
+        velocity = maxSpeed # all components of velocity set to maxSpeed
+    }
+    #totalTime = totalTime + 1 # incorrect, environment variable updated in policy
+}
+
+# Functions can return values and take inputs. Uncommon in learnt policies most likely, but useful for human-written policies
+# may also appear in a DeepQN context, e.g. an activation function could be represented in code
+add(x,y) {
+    return x+y
+}

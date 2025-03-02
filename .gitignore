@@ -1,0 +1,5 @@
+*.polyc
+*.png
+models/
+.venv/
+.__pycache__/

@@ -1,0 +1,23 @@
+{
+  "input_vars": {
+    "cart_pos": 1,
+    "cart_vel": 1,
+    "pole_angle": 1,
+    "pole_vel": 1
+  },
+  "output_vars": {
+    "cart_force": 1
+  },
+  "constants": {
+    "max_force": 1.0
+  },
+  "env_vars": {},
+  "constraints": [
+    "cart_force >= -1.0",
+    "cart_force <= 1.0"
+  ],
+  "goals": [
+    "min abs(pole_angle)"
+  ],
+  "model_name": "CartPoleNeuralNetwork"
+}
