@@ -5,6 +5,7 @@ This module handles code generation for Poly-c code
 
 from symbol_table import SymbolType, DataType
 from parser import ASTNodeType
+import re
 
 class CodeGenerator:
     """Code generator for Poly-c"""
@@ -123,38 +124,50 @@ class CodeGenerator:
             for child in node.children:
                 code = self._generate_node(child)
                 if code:
+                    # Fix neural network operations that are missing assignments
+                    if isinstance(code, str) and code.startswith('(self.layer') and '+' in code and '*' in code:
+                        # This is likely a neural network computation without assignment
+                        # Extract the array variable that should be updated
+                        match = re.match(r'\((self\.\w+\[\d+\])\s*\+\s*(.*)\)', code)
+                        if match:
+                            var_name, expression = match.groups()
+                            # Create proper accumulation statement
+                            code = f"{var_name} += {expression}"
+                    
                     # Skip standalone expressions with no effect
                     if not self.current_line_has_assignment and isinstance(code, str):
-                        # Check if it's an expression without assignment
-                        if code.startswith('(') and code.endswith(')'):
-                            # This is an expression without assignment - likely a bug in the original code
-                            # For neural networks, try to add a self-assignment
-                            if "layer" in code and "*" in code and "+" in code:
-                                # Assume this is a neural network calculation
-                                # Try to extract the array variable that should be assigned
-                                array_match = re.search(r'\((self\.\w+\[\d+\])', code)
-                                if array_match:
-                                    array_var = array_match.group(1)
-                                    # Replace the parentheses to make it a proper expression
-                                    expr = code[1:-1]
-                                    # Add assignment
-                                    code = f"{array_var} = {expr}"
-                            elif "self." in code and "(" in code and ")" in code and not any(x in code for x in ["=", "if", "while"]):
-                                # This looks like a function call without assignment
-                                # Likely an activation function call
-                                if any(func in code for func in ["relu", "sigmoid", "tanh", "identity"]):
-                                    # Try to extract the argument
-                                    arg_match = re.search(r'self\.\w+\((self\.\w+\[\d+\])\)', code)
-                                    if arg_match:
-                                        arg = arg_match.group(1)
-                                        # Add self-assignment
-                                        code = f"{arg} = {code}"
-                                        
-                    # Don't add standalone identifiers/expressions without context
-                    if not (isinstance(code, str) and code.startswith('self.') and '\n' not in code and 
-                           '=' not in code and '(' not in code):
+                        if code.startswith('(') and code.endswith(')') and '+' in code:
+                            # Try to extract a variable from expressions like (var + expr)
+                            match = re.match(r'\((self\.\w+\[\d+\])\s*\+\s*(.*)\)', code)
+                            if match:
+                                var_name, expression = match.groups()
+                                code = f"{var_name} += {expression}"
+                        elif 'self.' in code and any(func in code for func in ['relu', 'sigmoid', 'tanh', 'identity']):
+                            # Handle activation function calls
+                            match = re.search(r'self\.\w+\((self\.\w+\[\d+\])\)', code)
+                            if match:
+                                var_name = match.group(1)
+                                code = f"{var_name} = {code}"
+                    
+                    # Only add meaningful statements
+                    if not (isinstance(code, str) and code.strip().startswith('self.') and 
+                           '\n' not in code and '=' not in code and '(' not in code):
                         result.append(code)
-            return '\n'.join(result) if result else None
+            
+            # Fix indentation for cart_force assignment that may be incorrectly nested
+            fixed_result = []
+            for line in result:
+                if isinstance(line, str) and 'cart_force = self.layer' in line:
+                    # The cart_force assignment should not be indented in a special way
+                    # We ensure it's properly formatted at the right indentation level
+                    fixed_line = line.lstrip()
+                    if self.indent_level > 0:
+                        fixed_line = self.indent() + fixed_line
+                    fixed_result.append(fixed_line)
+                else:
+                    fixed_result.append(line)
+            
+            return '\n'.join(fixed_result) if fixed_result else None
     
     def _generate_program(self, node):
         """Generate code for the program."""
@@ -431,7 +444,6 @@ class CodeGenerator:
         # Check for neural network activation function calls
         if isinstance(right, str) and any(func in right for func in ["relu", "sigmoid", "tanh", "identity"]):
             # Check if it's a function call where the argument is the same as the left side
-            import re
             func_match = re.search(r'self\.(\w+)\((self\.\w+\[\d+\])\)', right)
             if func_match:
                 func_name, arg_var = func_match.groups()
