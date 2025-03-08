@@ -1097,11 +1097,11 @@ if __name__ == "__main__":
     # Run with multiple pruning methods and specified pruning ratios
     base_model, all_pareto_fronts, pruning_methods = prune_dqn_with_multiple_methods(
         env_name='CartPole-v1',
-        hidden_dims=[256, 128, 64, 16],
+        hidden_dims=[16, 16, 16, 16],
         train_episodes=20000,  # Max episodes, early stopping is used
         eval_episodes=50,     # Reduced for faster execution but still statistically meaningful
-        early_stop_reward=300.0,  # CartPole-v1 is considered solved at 195.0
-        render_every=None,        # Disable rendering during training for faster execution
+        early_stop_reward=195.0,  # CartPole-v1 is considered solved at 195.0
+        render_every=10,        # Disable rendering during training for faster execution
         render_final=True,        # Render final performance after training
         visualize_pruning=True,   # Visualize model at each pruning level
         prune_ratios=custom_prune_ratios  # Use the custom pruning ratios
